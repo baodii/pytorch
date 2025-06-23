@@ -4,10 +4,109 @@
 #include <ATen/native/mkldnn/xpu/detail/DnnlExt.h>
 #include <ATen/native/mkldnn/xpu/detail/Utils.h>
 
+#include <chrono>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <tuple>
+#include <vector>
+
 #include <oneapi/dnnl/dnnl.hpp>
 #include <cstdint>
 
 namespace at::native::onednn {
+
+class TimeLogger {
+ public:
+  // Static inline member, can be defined and initialized inside the class
+  static inline std::vector<long long> starts;
+  static inline std::vector<long long> phase0;
+  static inline std::vector<long long> phase1;
+  static inline std::vector<long long> phase2;
+
+  // Static method to access the singleton instance
+  static TimeLogger& get_instance() {
+    static TimeLogger
+        instance; // Static local variable to ensure single instance
+    return instance;
+  }
+
+  void record_start() {
+    // Get the current timestamp in nanoseconds
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    auto nanoseconds =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    // Store m, n, k, and timestamp in the static log_data
+    starts.push_back(nanoseconds);
+  }
+
+  void record_phase0() {
+    // Get the current timestamp in nanoseconds
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    auto nanoseconds =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    // Store m, n, k, and timestamp in the static log_data
+    phase0.push_back(nanoseconds);
+  }
+
+  void record_phase1() {
+    // Get the current timestamp in nanoseconds
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    auto nanoseconds =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    // Store m, n, k, and timestamp in the static log_data
+    phase1.push_back(nanoseconds);
+  }
+
+  void record_phase2() {
+    // Get the current timestamp in nanoseconds
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    auto nanoseconds =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    // Store m, n, k, and timestamp in the static log_data
+    phase2.push_back(nanoseconds);
+  }
+
+  // Destructor to write the log data to the file only once when the program
+  // exits
+  ~TimeLogger() {
+    std::ofstream file("pri_host_time_log.txt", std::ios::app);
+
+    if (!file) {
+      std::cerr << "Error opening file!" << std::endl;
+      return;
+    }
+
+    // Write all stored logs to the file
+    for (size_t i = 0; i < starts.size(); i++) {
+      auto s = starts[i];
+      auto p0 = phase0[i];
+      auto p1 = phase1[i];
+      auto p2 = phase2[i];
+
+      // Write the log to the file
+      file << "host time: " << p0 - s << "," << p1 - p0 << "," << p2 - p1
+           << "\n";
+    }
+  }
+
+ private:
+  // Private constructor to prevent direct instantiation (Singleton pattern)
+  TimeLogger() {}
+
+  // Prevent copying and assignment
+  TimeLogger(const TimeLogger&) = delete;
+  TimeLogger& operator=(const TimeLogger&) = delete;
+};
+
 
 void woq_matmul_int4_impl(
     Tensor& result,
@@ -16,6 +115,8 @@ void woq_matmul_int4_impl(
     const Tensor& scale,
     const Tensor& zp,
     int64_t group_size) {
+  TimeLogger& cpu_obj = TimeLogger::get_instance();
+  cpu_obj.record_start();
   auto& engine = GpuEngineManager::Instance().get_engine();
   auto& stream = GpuStreamManager::Instance().get_stream();
 
@@ -166,7 +267,10 @@ void woq_matmul_int4_impl(
   args.insert({DNNL_ARG_DST, dst_m});
   args.insert({DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scale_m});
   args.insert({DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_WEIGHTS, zp_usr_m});
+  cpu_obj.record_phase0();
   dnnl::sycl_interop::execute(matmul_p, stream, args);
+  cpu_obj.record_phase1();
+  cpu_obj.record_phase2();
 }
 
 static inline void set_quant_primitive_attr(
@@ -194,6 +298,8 @@ void woq_matmul_int4_impl_cache(
     const Tensor& scale,
     const Tensor& zp,
     int64_t group_size) {
+  TimeLogger& cpu_obj = TimeLogger::get_instance();
+  cpu_obj.record_start();
   auto a_sz = mat1.sizes();
   auto c_sz = result.sizes();
 
@@ -296,8 +402,11 @@ void woq_matmul_int4_impl_cache(
   arg_handles.emplace_back(DNNL_ARG_SCRATCHPAD, scratchpad_tensor.data_ptr());
 
   auto& strm = GpuStreamManager::Instance().get_stream();
+  cpu_obj.record_phase0();
   auto qint4_matmul_event =
       matmul_ext.execute(strm, engine, std::move(arg_handles), arg_off);
+  cpu_obj.record_phase1();
+  cpu_obj.record_phase2();
 }
 
 void woq_matmul_int4(
